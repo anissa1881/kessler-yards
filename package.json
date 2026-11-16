@@ -2,11 +2,17 @@
   "name": "kessler-yards",
   "version": "1.0.0",
   "private": true,
-  "description": "Kessler Yards: an original round-based tactical FPS in three.js",
+  "description": "Kessler Yards: an original round-based tactical FPS in three.js, with no build step",
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "serve": "node serve.ts",
-    "capture": "node capture.mjs"
+    "capture": "node capture.mjs",
+    "check-webgl": "node cek-webgl.mjs",
+    "hand-in": "MAKEFUN_OUTPUT_DIR=out node main.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
   },
   "devDependencies": {
     "playwright": "^1.49.0"

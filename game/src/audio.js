@@ -38,15 +38,39 @@ const VOICES = {
   hit: { thump: { from: 900, to: 700, gain: 0.14, decay: 0.05 } },
   win: { thump: { from: 520, to: 780, gain: 0.22, decay: 0.30 } },
   lose: { thump: { from: 420, to: 190, gain: 0.22, decay: 0.34 } },
+  // The charge: a high, dry tick for the plant, a lower one for a defuse in progress. They are
+  // far apart in pitch on purpose, so which of the two is happening is heard and not guessed.
+  plantTick: { thump: { from: 1450, to: 1200, gain: 0.10, decay: 0.03 } },
+  defuseTick: { thump: { from: 520, to: 480, gain: 0.12, decay: 0.04 } },
+  planted: { thump: { from: 300, to: 640, gain: 0.26, decay: 0.34 } },
+  defused: { thump: { from: 700, to: 240, gain: 0.26, decay: 0.36 } },
+  // A smoke canister popping and hissing out, then the flat rush of the cloud filling a lane.
+  smokePop: { noise: { gain: 0.26, decay: 0.14, filter: 2400, q: 1.6 }, thump: { from: 420, to: 180, gain: 0.12, decay: 0.10 } },
+  smokeHiss: { noise: { gain: 0.10, decay: 0.55, filter: 5200, q: 0.5 } },
+  // A flash: a short, very bright whine that sits above everything else in a firefight.
+  flashPop: { noise: { gain: 0.50, decay: 0.22, filter: 6200, q: 0.6 }, thump: { from: 1600, to: 900, gain: 0.18, decay: 0.14 } },
+  flashRing: { thump: { from: 3200, to: 2600, gain: 0.10, decay: 0.90 } },
 };
 
-/** Weapon key from the weapon's name, so the audio layer does not import the catalogue. */
+/**
+ * Weapon key from the weapon's name, so the audio layer does not import the catalogue. The catalog
+ * names are Sidearm, Rifle, Compact, Breacher, so the shotgun is named after what it is and not
+ * after the word "shotgun": matching only that word would leave the loudest gun in the game firing
+ * a pistol's crack.
+ */
 export function voiceForWeapon(name) {
   const lower = String(name).toLowerCase();
-  if (lower.includes('shotgun')) return 'shotgun';
+  if (lower.includes('shotgun') || lower.includes('breacher')) return 'shotgun';
   if (lower.includes('rifle')) return 'rifle';
-  if (lower.includes('smg')) return 'smg';
+  if (lower.includes('smg') || lower.includes('compact')) return 'smg';
   return 'pistol';
+}
+
+/** The sound a thrown grenade makes when it goes off, by kind. */
+export function voicesForGrenade(kind) {
+  if (kind === 'smoke') return ['smokePop', 'smokeHiss'];
+  if (kind === 'flash') return ['flashPop', 'flashRing'];
+  return ['frag'];
 }
 
 export function createAudio() {

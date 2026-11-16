@@ -23,6 +23,7 @@ const PHASE_LABEL = {
   freeze: 'Freeze',
   live: 'Live',
   over: 'Round over',
+  planted: 'Charge',
 };
 
 /** Turn a number of seconds into m:ss. */
@@ -50,17 +51,23 @@ export function createHud() {
   const threat = document.getElementById('threat');
   const arm = document.getElementById('arm');
   const armFill = document.getElementById('arm-fill');
+  const charge = document.getElementById('charge');
+  const chargeFill = document.getElementById('charge-fill');
+  const chargeLabel = document.getElementById('charge-label');
   const clockBox = document.getElementById('clock');
   const clockTime = document.getElementById('clock-time');
   const clockPhase = document.getElementById('clock-phase');
   const objective = document.getElementById('objective');
   const buy = document.getElementById('buy');
   const buyList = document.getElementById('buy-list');
+  const grenades = document.getElementById('grenades');
+  const blind = document.getElementById('blind');
+  const feed = document.getElementById('feed');
 
   let hitTimer = 0;
   let hurtTimer = 0;
   let threatTimer = 0;
-  let last = { mag: -1, reserve: -1, health: -1, money: -1, player: -1, bots: -1, time: '', phase: '' };
+  let last = { mag: -1, reserve: -1, health: -1, money: -1, player: -1, bots: -1, time: '', phase: '', grenades: '', feed: '' };
 
   return {
     setAmmo(mag, reserve) {
@@ -108,6 +115,32 @@ export function createHud() {
       objective.classList.toggle('on', on);
     },
     /**
+     * The charge's bar, shared by the plant and the defuse: `label` says which one is filling, so
+     * the two never look alike and a player can tell in a glance whether to keep holding E.
+     */
+    setCharge(label, fraction) {
+      const shown = Math.max(0, Math.min(1, fraction));
+      const visible = label !== '' && shown > 0.001 && shown < 1;
+      charge.classList.toggle('on', visible);
+      charge.classList.toggle('defuse', label === 'Defusing');
+      if (visible) {
+        chargeLabel.textContent = label;
+        chargeFill.style.width = `${(shown * 100).toFixed(1)}%`;
+      }
+    },
+    /** The grenades in the bag, as three counts that hide when empty. */
+    setGrenades(counts) {
+      const key = `${counts.frag},${counts.smoke},${counts.flash}`;
+      if (key === last.grenades) return;
+      last.grenades = key;
+      const parts = [];
+      if (counts.frag > 0) parts.push(`frag ${counts.frag}`);
+      if (counts.smoke > 0) parts.push(`smoke ${counts.smoke}`);
+      if (counts.flash > 0) parts.push(`flash ${counts.flash}`);
+      grenades.textContent = parts.join('  ·  ');
+      grenades.classList.toggle('on', parts.length > 0);
+    },
+    /**
      * Show how far the arming hold has got, 0..1. Below epsilon the bar hides, so letting go of E
      * makes it disappear rather than lingering half full.
      */
@@ -116,6 +149,32 @@ export function createHud() {
       const visible = shown > 0.001 && shown < 1;
       arm.classList.toggle('on', visible);
       armFill.style.width = `${(shown * 100).toFixed(1)}%`;
+    },
+    /**
+     * The kill feed: one line per elimination, newest first. Rebuilt only when the set of lines
+     * changes, so a steady firefight does not churn the DOM every frame.
+     */
+    setFeed(rows) {
+      const key = rows.map((row) => row.id).join(',');
+      if (key === last.feed) return;
+      last.feed = key;
+      feed.textContent = '';
+      for (const row of rows) {
+        const line = document.createElement('div');
+        line.textContent = row.text;
+        if (row.head) line.className = 'head';
+        feed.append(line);
+      }
+      feed.classList.toggle('on', rows.length > 0);
+    },
+    /**
+     * The whiteout of a flash, 0..1: 0 hides it. It is drawn over everything, because a flash is
+     * supposed to take the whole screen away, not tint it.
+     */
+    setBlind(fraction) {
+      const shown = Math.max(0, Math.min(1, fraction));
+      blind.style.opacity = shown.toFixed(2);
+      blind.classList.toggle('on', shown > 0.01);
     },
     hitMarker(killed, holdMs = 90) {
       hitmarker.classList.add('on');

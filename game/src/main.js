@@ -10,7 +10,9 @@ import { createWeapon } from './weapon.js';
 import { createBots } from './bots.js';
 import { createHud } from './hud.js';
 import { createMatch, CATALOG, SITE } from './match.js';
-import { createAudio, voiceForWeapon } from './audio.js';
+import { createGrenades } from './grenade.js';
+import { createFeed } from './feed.js';
+import { createAudio, voiceForWeapon, voicesForGrenade } from './audio.js';
 
 const FIXED_STEP = 1 / 60;
 const params = new URLSearchParams(window.location.search);
@@ -104,6 +106,8 @@ siteRing.position.copy(SITE).setY(0.03);
 scene.add(siteRing);
 
 const body = player.state;
+const grenades = createGrenades(scene, world.colliders);
+const feed = createFeed();
 const markerHoldMs = shot ? 4000 : 90;
 let playerHealth = 100;
 let frozen = false;
@@ -111,10 +115,8 @@ let started = false;
 let accumulator = 0;
 let lastTime = performance.now();
 let buyOpen = false;
-// How long E must stay held inside the site to arm it. The prompt has always said "hold", so the
-// plant is a hold: letting go drops the progress rather than arming on a single keypress.
-const ARM_HOLD = 3.2;
-let armHeld = 0;
+// How long the flash blinds the player for, and how long the whiteout is at full strength.
+let blindLeft = 0;
 
 weapon.equip(match.heldWeapon());
 hud.setAmmo(weapon.state.mag, weapon.state.reserve);
@@ -223,6 +225,8 @@ function shoot(spread) {
     if (bots.damage(target, amount)) {
       match.state.money += match.KILL_REWARD;
       killedNow.push(target);
+      // The feed names the gun that did it, and marks a head shot.
+      feed.add('you', `bot ${target.index + 1}`, weapon.spec().id, head);
     }
     hud.hitMarker(head);
   }
@@ -236,25 +240,110 @@ function shoot(spread) {
   return true;
 }
 
-/** Throw a frag from the eye toward the aim, and hurt anything close when it lands. */
-function throwFrag() {
-  if (match.state.grenades <= 0) return;
-  match.state.grenades -= 1;
+/**
+ * Throw one grenade of `kind` from the eye along the aim. The grenade module owns the flight and
+ * what happens when it lands; this function only decides who gets hurt by the frag and blinded by
+ * the flash, because the player's health and the bots' live here and there.
+ */
+function throwGrenade(kind) {
+  if (!match.takeGrenade(kind)) return;
   camera.getWorldDirection(direction);
-  const landing = new THREE.Vector3(
-    camera.position.x + direction.x * 12,
-    camera.position.y + direction.y * 12,
-    camera.position.z + direction.z * 12,
-  );
-  const distance = Math.min(landing.y, 0);
-  landing.y = Math.max(0, distance);
+  grenades.throwOne(kind, camera.position.clone(), direction.clone());
+  audio.play(kind === 'smoke' ? 'frag' : 'frag');
+  hud.setGrenades(match.state.grenades);
+}
+
+/**
+ * A grenade went off. The frag hurts every living bot within its radius, with the falloff and the
+ * cover penalty the module works out, and the flash blinds bots looking at it. The player is hurt
+ * and blinded by the same rules, which is what makes throwing one at your own feet a mistake.
+ */
+function onFrag(at, radius, damageFor) {
+  const eye = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
   for (const bot of bots.items) {
     if (!bot.alive) continue;
-    const gap = Math.hypot(bot.position.x - landing.x, bot.position.z - landing.z);
-    if (gap < 4.2) bots.damage(bot, 110 * (1 - gap / 4.2));
+    const target = new THREE.Vector3(bot.position.x, bot.position.y + 1.0, bot.position.z);
+    const cover = grenades.blocked(at, target);
+    const amount = damageFor(target, cover);
+    if (amount <= 0) continue;
+    if (bots.damage(bot, amount)) match.state.money += match.KILL_REWARD;
   }
-  audio.play('frag');
+  const cover = grenades.blocked(at, eye);
+  const amount = damageFor(eye, cover);
+  if (amount > 0) {
+    playerHealth -= amount;
+    hud.setHealth(playerHealth);
+    hud.flashHurt();
+    audio.play('hurt');
+    if (playerHealth <= 0) match.endRound(false, 'Your own frag killed you.');
+  }
+  playGrenadeVoices('frag');
+  hud.setMoney(match.state.money);
   if (bots.aliveCount() === 0) match.endRound(true, 'The fragment cleared the yard.');
+}
+
+/** The sound of a grenade going off, by kind: a frag booms, a smoke hisses, a flash whines. */
+function playGrenadeVoices(kind) {
+  const [first, second] = voicesForGrenade(kind);
+  audio.play(first);
+  if (second) audio.play(second, { when: 0.12 });
+}
+
+// The plant and the defuse tick at a steady rate rather than once a frame: eight beats a second
+// would be a buzz, and one beat a second reads as a clock the player can hurry along.
+const TICK_SECONDS = 0.25;
+let nextTick = 0;
+
+function tickCharge(voice, fraction) {
+  if (fraction <= 0.001) {
+    nextTick = 0;
+    return;
+  }
+  const now = performance.now() / 1000;
+  if (now < nextTick) return;
+  nextTick = now + TICK_SECONDS;
+  audio.play(voice);
+}
+
+/** A flash went off: bots that can see it are blinded, and so are we if we were looking. */
+function onFlash(at, radius, blindSeconds) {
+  const eye = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
+  for (const bot of bots.items) {
+    if (!bot.alive) continue;
+    const target = new THREE.Vector3(bot.position.x, bot.position.y + 1.62, bot.position.z);
+    if (target.distanceTo(at) > radius) continue;
+    if (grenades.blocked(at, target)) continue;
+    bots.blind(bot, blindSeconds);
+  }
+  if (eye.distanceTo(at) <= radius && !grenades.blocked(at, eye)) {
+    blindLeft = Math.max(blindLeft, blindSeconds);
+    audio.play('hurt');
+  }
+  playGrenadeVoices('flash');
+}
+
+/**
+ * Which grenade the next throw would use: the picked kind if there is one left, else the first kind
+ * still in the bag. Picking is only meaningful with more than one kind, so Z cycles and the HUD
+ * never has to explain it.
+ */
+let grenadePick = 'frag';
+const GRENADE_ORDER = ['frag', 'smoke', 'flash'];
+
+function selectedGrenade() {
+  if ((match.state.grenades[grenadePick] ?? 0) > 0) return grenadePick;
+  return GRENADE_ORDER.find((kind) => (match.state.grenades[kind] ?? 0) > 0) ?? grenadePick;
+}
+
+function cycleGrenade() {
+  const start = GRENADE_ORDER.indexOf(grenadePick);
+  for (let step = 1; step <= GRENADE_ORDER.length; step += 1) {
+    const kind = GRENADE_ORDER[(start + step) % GRENADE_ORDER.length];
+    if ((match.state.grenades[kind] ?? 0) > 0) {
+      grenadePick = kind;
+      return;
+    }
+  }
 }
 
 function step(dt) {
@@ -266,6 +355,7 @@ function step(dt) {
     weapon.step(dt);
     camera.position.set(body.position.x, body.position.y + body.eye, body.position.z);
     aimPoint.set(camera.position.x, camera.position.y, camera.position.z);
+    // Smoke cuts a sight line, so a bot that would shoot down a lane cannot see through it.
     bots.step(dt, now, aimPoint, (amount, from) => {
       playerHealth -= amount;
       hud.setHealth(playerHealth);
@@ -280,24 +370,47 @@ function step(dt) {
         audio.play('hit', { pan: Math.max(-1, Math.min(1, Math.sin(bearing - facing))) });
       }
       if (playerHealth <= 0) match.endRound(false, 'You were eliminated.');
-    });
-
-    // arming the site: hold E inside the ring until the bar fills
-    const inSite = Math.hypot(body.position.x - SITE.x, body.position.z - SITE.z) < 1.6;
-    if (input.state.keys.has('KeyE') && inSite && !match.state.siteArmed) {
-      armHeld = Math.min(ARM_HOLD, armHeld + dt);
-      if (armHeld >= ARM_HOLD) {
-        match.state.siteArmed = true;
-        match.state.money += match.PLANT_REWARD;
-        hud.setMoney(match.state.money);
-        audio.play('frag');
-      }
-    } else {
-      // let go, or walk out of the ring: the hold restarts from nothing
-      armHeld = 0;
+    }, grenades.smoked);
+    // The charge: holding E at the site plants it, and the bots come to defuse it once it is down.
+    const holding = input.state.keys.has('KeyE');
+    if (match.plantStep(dt, body.position, holding)) {
+      // The charge is down: a rising two-note tells the player the round's clock just changed.
+      audio.play('planted');
+      hud.setMoney(match.state.money);
+    } else if (match.state.plantProgress > 0) {
+      // A dry tick while the plant builds, paced by the bar so the two agree.
+      tickCharge('plantTick', match.state.plantProgress / match.PLANT_SECONDS);
     }
-    hud.setArmProgress(armHeld / ARM_HOLD);
-    hud.setArmed(match.state.siteArmed);
+    hud.setCharge('Planting', match.state.plantProgress / match.PLANT_SECONDS);
+
+    if (match.state.planted) {
+      // Every bot standing at the charge is defusing it, and the slowest one sets the pace.
+      let defusers = 0;
+      for (const bot of bots.items) {
+        if (!bot.alive) continue;
+        if (Math.hypot(bot.position.x - SITE.x, bot.position.z - SITE.z) < match.DEFUSE_RANGE) defusers += 1;
+      }
+      if (match.defuseStep(dt, defusers)) audio.play('defused');
+      if (defusers > 0) {
+        hud.setCharge('Defusing', match.state.defuseProgress / match.DEFUSE_SECONDS);
+        tickCharge('defuseTick', match.state.defuseProgress / match.DEFUSE_SECONDS);
+      }
+    }
+
+    // Grenades in flight and the smoke they leave behind, owned by the grenade module.
+    grenades.step(dt, onFrag, onFlash, () => playGrenadeVoices('smoke'));
+
+    // A flash left us blind: the screen whites out while it fades.
+    if (blindLeft > 0) {
+      blindLeft = Math.max(0, blindLeft - dt);
+      hud.setBlind(Math.min(1, blindLeft / 1.2));
+    } else {
+      hud.setBlind(0);
+    }
+
+    hud.setArmed(match.state.planted);
+    hud.setGrenades(match.state.grenades);
+    hud.setFeed(feed.live().map((row) => ({ id: row.id, text: feed.textOf(row), head: row.head })));
   } else {
     weapon.step(dt);
   }
@@ -309,15 +422,24 @@ function step(dt) {
     const result = match.state.lastResult;
     match.nextRound();
     playerHealth = 100;
-    armHeld = 0;
-    hud.setArmProgress(0);
+    blindLeft = 0;
+    hud.setBlind(0);
+    hud.setCharge('', 0);
+    grenades.reset();
     bots.reset();
     weapon.refillForRound();
     hud.setHealth(playerHealth);
     hud.setMoney(match.state.money);
     hud.setAmmo(weapon.state.mag, weapon.state.reserve);
     hud.setArmed(false);
-    if (result) hud.showOverlay('end', `${result.reason} Rounds ${match.state.score.player} to ${match.state.score.bots}.`);
+    hud.setGrenades(match.state.grenades);
+    feed.clear();
+    hud.setFeed([]);
+    // The card says who won, why, and the score, all from the same facts the feed uses.
+    if (result) {
+      const card = feed.card(result, match.state.score, match.state.round - 1);
+      hud.showOverlay('end', `${card.title} \u2014 ${card.detail}. ${card.score}.`);
+    }
   }
 }
 
@@ -330,7 +452,7 @@ function frame(now) {
     player.look(look.x, look.y);
     if (input.state.keys.has('KeyB')) toggleBuy();
     if (buyOpen) {
-      for (const key of ['1', '2', '3', '4', '5']) if (input.state.keys.has(`Digit${key}`)) buyByKey(key);
+      for (const key of ['1', '2', '3', '4', '5', '6', '7']) if (input.state.keys.has(`Digit${key}`)) buyByKey(key);
       input.state.keys.clear();
     }
     if (input.state.firing && weapon.ready() && !buyOpen) shoot(shot ? 0 : weapon.spread(player.groundSpeed()));
@@ -340,9 +462,14 @@ function frame(now) {
       // the magazine seating, half a beat later
       audio.play('reloadIn', { when: 0.9 });
     }
+    // G throws a grenade; with more than one kind in the bag, Z picks which one comes next.
     if (input.state.keys.has('KeyG')) {
-      throwFrag();
+      throwGrenade(selectedGrenade());
       input.state.keys.delete('KeyG');
+    }
+    if (input.state.keys.has('KeyZ')) {
+      cycleGrenade();
+      input.state.keys.delete('KeyZ');
     }
     accumulator += dt;
     let steps = 0;
@@ -402,10 +529,11 @@ function runShot(name) {
       match.state.score.bots = 1;
       match.state.money = 3150;
       playerHealth = 64;
-      match.state.siteArmed = true;
+      match.state.planted = true;
+      match.state.fuse = 12;
       settle(20);
       aimAt(new THREE.Vector3(SITE.x, 0.6, SITE.z));
-      hud.showOverlay('end', 'The site went off. Rounds 2 to 1.');
+      hud.showOverlay('end', 'The charge went off at the site. Rounds 2 to 1.');
     } else {
       settle(12);
       aimAt(new THREE.Vector3(bots.items[1].position.x, 1.5, bots.items[1].position.z));

@@ -203,6 +203,73 @@
     transition: width 60ms linear;
   }
 
+  #charge {
+    position: fixed;
+    left: 50%;
+    top: 118px;
+    transform: translateX(-50%);
+    width: 196px;
+    text-align: center;
+    font-family: var(--font-readout);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity 120ms linear;
+  }
+  #charge.on { opacity: 1; }
+  #charge.defuse { color: var(--muted); }
+  #charge-label { display: block; margin-bottom: 4px; }
+  #charge-track {
+    height: 6px;
+    border: 1px solid currentColor;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  #charge-fill {
+    height: 100%;
+    width: 0%;
+    background: currentColor;
+    transition: width 60ms linear;
+  }
+
+  #grenades {
+    position: fixed;
+    left: 50%;
+    bottom: 46px;
+    transform: translateX(-50%);
+    font-family: var(--font-readout);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 120ms linear;
+  }
+  #grenades.on { opacity: 1; }
+
+  /* The kill feed: newest at the top, each line fading out on its own as it ages. */
+  #feed {
+    position: fixed;
+    right: 22px;
+    top: 74px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-items: flex-end;
+    font-family: var(--font-readout);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    opacity: 0;
+    transition: opacity 120ms linear;
+    pointer-events: none;
+  }
+  #feed.on { opacity: 1; }
+  #feed > div { background: rgba(0, 0, 0, 0.42); padding: 2px 7px; }
+  #feed > div.head { color: var(--accent); }
+
   #hurt {
     position: fixed;
     inset: 0;
@@ -212,6 +279,16 @@
     pointer-events: none;
   }
   #hurt.on { opacity: 1; }
+
+  /* A flash: a white that covers everything, faded by the HUD as the blindness wears off. */
+  #blind {
+    position: fixed;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 40;
+  }
 
   /* Which way the shot that just hit you came from: a wedge pinned to the screen edge. */
   #threat {
@@ -286,10 +363,17 @@
   <div id="crosshair"><i></i><i></i><i></i><i></i></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="hurt"></div>
+  <div id="blind"></div>
   <div id="threat"><i></i></div>
   <div id="clock"><div id="clock-time">1:35</div><div id="clock-phase">Freeze</div></div>
-  <div id="objective">Site armed</div>
+  <div id="objective">Charge planted</div>
   <div id="arm"><div id="arm-fill"></div></div>
+  <div id="charge">
+    <span id="charge-label"></span>
+    <div id="charge-track"><div id="charge-fill"></div></div>
+  </div>
+  <div id="grenades"></div>
+  <div id="feed"></div>
   <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span></div>
   <div id="vitals">
     <div><span id="health-label">Health</span><span id="health">100</span></div>
