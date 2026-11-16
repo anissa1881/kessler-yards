@@ -37,18 +37,29 @@ if ($git) { Good "git" } else { Write-Host "  (git tidak ada, akan pakai unduhan
 
 Say "`n2. Menyiapkan folder kerja"
 
-$work = Join-Path $env:USERPROFILE 'kessler-yards-work'
-if (Test-Path $work) {
-  Write-Host "  folder sudah ada, memakai yang lama: $work"
+# If this script is already sitting inside the source (for example in kessler-yards-main
+# unzipped from the archive), use that folder rather than making a second copy.
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$inner = $scriptDir
+$alreadyHere = (Test-Path (Join-Path $inner 'game\index.html')) -and (Test-Path (Join-Path $inner 'capture.mjs'))
+
+if ($alreadyHere) {
+  Write-Host "  memakai folder yang sudah ada: $inner"
+  $work = Split-Path -Parent $inner
 } else {
-  New-Item -ItemType Directory -Path $work | Out-Null
-  Write-Host "  dibuat: $work"
+  $work = Join-Path $env:USERPROFILE 'kessler-yards-work'
+  if (Test-Path $work) {
+    Write-Host "  folder sudah ada, memakai yang lama: $work"
+  } else {
+    New-Item -ItemType Directory -Path $work | Out-Null
+    Write-Host "  dibuat: $work"
+  }
+  $inner = Join-Path $work 'kessler-yards'
 }
 Set-Location $work
 
 Say "`n3. Mengambil source"
 
-$inner = Join-Path $work 'kessler-yards'
 $hasGame = Test-Path (Join-Path $inner 'game\index.html')
 
 if ($hasGame) {
