@@ -47,6 +47,7 @@ export function createHud() {
   const scoreBots = document.getElementById('score-bots');
   const hitmarker = document.getElementById('hitmarker');
   const hurt = document.getElementById('hurt');
+  const threat = document.getElementById('threat');
   const clockBox = document.getElementById('clock');
   const clockTime = document.getElementById('clock-time');
   const clockPhase = document.getElementById('clock-phase');
@@ -56,6 +57,7 @@ export function createHud() {
 
   let hitTimer = 0;
   let hurtTimer = 0;
+  let threatTimer = 0;
   let last = { mag: -1, reserve: -1, health: -1, money: -1, player: -1, bots: -1, time: '', phase: '' };
 
   return {
@@ -116,6 +118,16 @@ export function createHud() {
       hurt.classList.add('on');
       clearTimeout(hurtTimer);
       hurtTimer = setTimeout(() => hurt.classList.remove('on'), 140);
+    },
+    /**
+     * Point a wedge at whoever just hit us. `angle` is the bearing to the shooter relative to
+     * where we are looking, in radians, clockwise: 0 ahead, +-PI behind.
+     */
+    showThreat(angle) {
+      threat.style.transform = `rotate(${angle}rad)`;
+      threat.classList.add('on');
+      clearTimeout(threatTimer);
+      threatTimer = setTimeout(() => threat.classList.remove('on'), 1200);
     },
     showBuy(rows) {
       buyList.textContent = '';

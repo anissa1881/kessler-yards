@@ -10,6 +10,7 @@ import { createWeapon } from './weapon.js';
 import { createBots } from './bots.js';
 import { createHud } from './hud.js';
 import { createMatch, CATALOG, SITE } from './match.js';
+import { createAudio, voiceForWeapon } from './audio.js';
 
 const FIXED_STEP = 1 / 60;
 const params = new URLSearchParams(window.location.search);
@@ -41,6 +42,18 @@ scene.fog = new THREE.Fog(new THREE.Color(PALETTE.canvas), 22, 58);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
+const audio = createAudio();
+
+// The muzzle flash: one unlit quad in front of the eye, lit for a few frames per shot. Cheaper
+// and steadier than a light, which would recompile every material in the scene on the first shot.
+const muzzle = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.22, 0.22),
+  new THREE.MeshBasicMaterial({ color: 0xffd9a0, transparent: true, opacity: 0, depthWrite: false }),
+);
+muzzle.position.set(0.16, -0.13, -0.42);
+camera.add(muzzle);
+let muzzleLeft = 0;
+
 const world = createWorld(scene);
 const bots = createBots(scene, world.colliders);
 const weapon = createWeapon(camera);
@@ -50,6 +63,33 @@ const input = createInput(renderer.domElement, onLockChange);
 const match = createMatch();
 const raycaster = new THREE.Raycaster();
 raycaster.far = 90;
+// Bullet impacts: a fixed pool of tiny quads dropped where a shot lands on the world. A pool
+// keeps this allocation-free, which matters at sixty steps a second.
+const SPARKS = 24;
+const sparks = [];
+const sparkGeometry = new THREE.PlaneGeometry(0.05, 0.05);
+for (let i = 0; i < SPARKS; i += 1) {
+  const spark = new THREE.Mesh(
+    sparkGeometry,
+    new THREE.MeshBasicMaterial({ color: 0xffe0b0, transparent: true, opacity: 0, depthWrite: false }),
+  );
+  spark.visible = false;
+  scene.add(spark);
+  sparks.push({ mesh: spark, left: 0 });
+}
+let sparkCursor = 0;
+
+/** Drop one spark at a hit point, turned to face the shooter so it reads from their view. */
+function sparkAt(point, normal) {
+  const slot = sparks[sparkCursor];
+  sparkCursor = (sparkCursor + 1) % SPARKS;
+  slot.mesh.position.copy(point);
+  if (normal) slot.mesh.position.addScaledVector(normal, 0.02);
+  slot.mesh.lookAt(camera.position);
+  slot.mesh.visible = true;
+  slot.left = 0.16;
+}
+
 const shootables = world.shootables.concat(bots.hitMeshes);
 const direction = new THREE.Vector3();
 const aimPoint = new THREE.Vector3();
@@ -85,6 +125,10 @@ hud.onPlay(() => {
 });
 
 function onLockChange(locked) {
+  if (locked) {
+    // The click that locks the pointer is also the gesture browsers require before audio.
+    audio.resume();
+  }
   if (shot) return;
   if (locked) {
     started = true;
@@ -142,7 +186,17 @@ function buyByKey(key) {
 
 /** One trigger pull: a ray per pellet, head shots worth far more than torso hits. */
 function shoot(spread) {
-  if (!weapon.takeRound()) return false;
+  if (!weapon.takeRound()) {
+    // The click of an empty magazine matters in a firefight: it tells you the mag ran dry.
+    audio.play('dry');
+    return false;
+  }
+
+  const shotVoice = voiceForWeapon(weapon.spec().name);
+  audio.play(shotVoice);
+  muzzleLeft = 0.05;
+  // Gunfire is loud: the bots within earshot turn toward it.
+  bots.hear(camera.position, shotVoice === 'shotgun' ? 22 : 16);
   const killedNow = [];
   for (let pellet = 0; pellet < weapon.pellets(); pellet += 1) {
     camera.getWorldDirection(direction);
@@ -153,7 +207,9 @@ function shoot(spread) {
     scene.updateMatrixWorld(true);
     raycaster.set(camera.position, direction);
     const hit = raycaster.intersectObjects(shootables, false)[0];
-    if (!hit || !hit.object.userData.bot) continue;
+    if (!hit) continue;
+    if (hit.face && !hit.object.userData.bot) sparkAt(hit.point, hit.face.normal);
+    if (!hit.object.userData.bot) continue;
     const target = hit.object.userData.bot;
     const head = hit.object.userData.part === 'head';
     const amount = weapon.spec().damage * (head ? 3.6 : 1);
@@ -190,6 +246,7 @@ function throwFrag() {
     const gap = Math.hypot(bot.position.x - landing.x, bot.position.z - landing.z);
     if (gap < 4.2) bots.damage(bot, 110 * (1 - gap / 4.2));
   }
+  audio.play('frag');
   if (bots.aliveCount() === 0) match.endRound(true, 'The fragment cleared the yard.');
 }
 
@@ -202,10 +259,19 @@ function step(dt) {
     weapon.step(dt);
     camera.position.set(body.position.x, body.position.y + body.eye, body.position.z);
     aimPoint.set(camera.position.x, camera.position.y, camera.position.z);
-    bots.step(dt, now, aimPoint, (amount) => {
+    bots.step(dt, now, aimPoint, (amount, from) => {
       playerHealth -= amount;
       hud.setHealth(playerHealth);
       hud.flashHurt();
+      audio.play('hurt');
+      // Show which way the fire came from, measured against where we are looking.
+      if (from) {
+        const bearing = Math.atan2(from.x - body.position.x, from.z - body.position.z);
+        camera.getWorldDirection(direction);
+        const facing = Math.atan2(direction.x, direction.z);
+        hud.showThreat(-(bearing - facing));
+        audio.play('hit', { pan: Math.max(-1, Math.min(1, Math.sin(bearing - facing))) });
+      }
       if (playerHealth <= 0) match.endRound(false, 'You were eliminated.');
     });
 
@@ -251,7 +317,12 @@ function frame(now) {
       input.state.keys.clear();
     }
     if (input.state.firing && weapon.ready() && !buyOpen) shoot(shot ? 0 : weapon.spread(player.groundSpeed()));
-    if (input.state.keys.has('KeyR')) weapon.reload();
+    if (input.state.keys.has('KeyR') && weapon.state.reloadLeft === 0 && weapon.state.mag < weapon.spec().mag) {
+      weapon.reload();
+      audio.play('reloadOut');
+      // the magazine seating, half a beat later
+      audio.play('reloadIn', { when: 0.9 });
+    }
     if (input.state.keys.has('KeyG')) {
       throwFrag();
       input.state.keys.delete('KeyG');
@@ -265,7 +336,25 @@ function frame(now) {
     }
     if (accumulator > FIXED_STEP * 5) accumulator = 0;
     syncCamera();
+
+    // Footsteps come from the player's own speed, not from a timer.
+    const speed = player.groundSpeed();
+    if (speed > 0.6) audio.footstep(speed);
   }
+
+  // Fade the short-lived effects. They are lit and dimmed here rather than with a tween, so a
+  // dropped frame can never leave a spark glowing on the wall.
+  if (muzzleLeft > 0) {
+    muzzleLeft = Math.max(0, muzzleLeft - dt);
+    muzzle.material.opacity = muzzleLeft > 0 ? 0.9 : 0;
+  }
+  for (const spark of sparks) {
+    if (spark.left <= 0) continue;
+    spark.left = Math.max(0, spark.left - dt);
+    spark.mesh.material.opacity = (spark.left / 0.16) * 0.9;
+    if (spark.left === 0) spark.mesh.visible = false;
+  }
+
   renderer.render(scene, camera);
 }
 

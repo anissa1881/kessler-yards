@@ -17,6 +17,9 @@ const FIRE_INTERVAL = 0.42;
 const BOT_DAMAGE = 11;
 const BOT_ACCURACY = 0.55;
 const RESPAWN_SECONDS = 3;
+// How far gunfire carries, and how long a bot keeps walking toward where it heard it.
+const HEAR_LIMIT = 24;
+const ALERT_SECONDS = 6;
 
 /** The routes each bot walks, as waypoints in the map's own coordinates. */
 const ROUTES = [
@@ -99,6 +102,9 @@ export function createBots(scene, colliders) {
       fireAt: 0,
       position: new THREE.Vector3(route[0][0], 0, route[0][1]),
       seenPlayer: false,
+      // Where the last shot came from, and how long it stays worth investigating.
+      alertUntil: 0,
+      alertPoint: new THREE.Vector3(),
     };
     torso.userData.bot = bot;
     head.userData.bot = bot;
@@ -115,6 +121,7 @@ export function createBots(scene, colliders) {
     bot.alive = true;
     bot.seenPlayer = false;
     bot.fireAt = 0;
+    bot.alertUntil = 0;
     bot.waypoint = 1;
     bot.position.set(bot.route[0][0], 0, bot.route[0][1]);
     bot.group.position.copy(bot.position);
@@ -141,7 +148,8 @@ export function createBots(scene, colliders) {
 
   /**
    * One simulation step: walk the route, turn to face the player when it is in sight, and fire on
-   * an interval. `onHit(amount)` is called when a bot's shot lands.
+   * an interval. `onHit(amount, from)` is called when a bot's shot lands, with the position it
+   * came from so the HUD can point at it.
    */
   function step(dt, now, playerEye, onHit) {
     for (const bot of bots) {
@@ -149,7 +157,11 @@ export function createBots(scene, colliders) {
         if (now >= bot.respawnAt) bot.respawnAt += 0;
         continue;
       }
-      const target = bot.route[bot.waypoint % bot.route.length];
+      // A bot that heard a shot walks toward where it came from until the alert runs out,
+      // then falls back to its route. This is what makes a noisy weapon cost something.
+      const alerted = now < bot.alertUntil;
+      if (!alerted && bot.alertPoint.lengthSq() !== 0) bot.alertPoint.set(0, 0, 0);
+      const target = alerted ? [bot.alertPoint.x, bot.alertPoint.z] : bot.route[bot.waypoint % bot.route.length];
       const dx = target[0] - bot.position.x;
       const dz = target[1] - bot.position.z;
       const distance = Math.hypot(dx, dz);
@@ -170,7 +182,10 @@ export function createBots(scene, colliders) {
       bot.group.rotation.y += (heading - bot.group.rotation.y) * Math.min(1, dt * 6);
 
       const speed = canSee ? ENGAGE_SPEED : WALK_SPEED;
-      if (distance < 0.6 && !canSee) {
+      if (alerted && distance < 1.2) {
+        // Reached the noise with nobody there: give up sooner than the full alert.
+        bot.alertUntil = Math.min(bot.alertUntil, now + 0.4);
+      } else if (distance < 0.6 && !canSee) {
         bot.waypoint = (bot.waypoint + 1) % bot.route.length;
       } else if (!canSee && distance > 0.001) {
         const stepX = (dx / distance) * speed * dt;
@@ -184,8 +199,24 @@ export function createBots(scene, colliders) {
       // Fire when the player is in sight and the interval has passed.
       if (canSee && now >= bot.fireAt) {
         bot.fireAt = now + FIRE_INTERVAL;
-        if (Math.random() < BOT_ACCURACY) onHit(BOT_DAMAGE);
+        if (Math.random() < BOT_ACCURACY) onHit(BOT_DAMAGE, bot.position);
       }
+    }
+  }
+
+  /**
+   * A shot went off at `point`. Every living bot within `radius` turns toward it and walks that
+   * way for ALERT_SECONDS, unless it already has the player in sight and needs no hint.
+   */
+  function hear(point, radius = HEAR_LIMIT) {
+    const reach = Math.min(radius, HEAR_LIMIT);
+    for (const bot of bots) {
+      if (!bot.alive || bot.seenPlayer) continue;
+      const gap = Math.hypot(point.x - bot.position.x, point.z - bot.position.z);
+      if (gap > reach) continue;
+      bot.alertPoint.set(point.x, 0, point.z);
+      // A shot right next to a bot holds its attention longer than one across the yard.
+      bot.alertUntil = performance.now() / 1000 + ALERT_SECONDS * (1 - Math.min(1, gap / reach) * 0.5);
     }
   }
 
@@ -193,6 +224,7 @@ export function createBots(scene, colliders) {
     items: bots,
     hitMeshes,
     damage,
+    hear,
     step,
     respawn,
     aliveCount() {
@@ -202,6 +234,12 @@ export function createBots(scene, colliders) {
     },
     reset() {
       for (const bot of bots) respawn(bot);
+    },
+    /** Bots currently walking toward a noise, for the HUD and for debugging. */
+    alertedCount(now) {
+      let count = 0;
+      for (const bot of bots) if (bot.alive && now < bot.alertUntil) count += 1;
+      return count;
     },
   };
 }

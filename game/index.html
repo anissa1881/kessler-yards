@@ -193,6 +193,31 @@
   }
   #hurt.on { opacity: 1; }
 
+  /* Which way the shot that just hit you came from: a wedge pinned to the screen edge. */
+  #threat {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    width: 118px;
+    height: 118px;
+    margin: -59px 0 0 -59px;
+    display: grid;
+    place-items: start center;
+    opacity: 0;
+    transition: opacity 160ms linear;
+    pointer-events: none;
+  }
+  #threat.on { opacity: 1; }
+  #threat i {
+    display: block;
+    width: 0;
+    height: 0;
+    border-left: 13px solid transparent;
+    border-right: 13px solid transparent;
+    border-bottom: 17px solid color-mix(in srgb, var(--accent) 88%, white);
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 70%, transparent));
+  }
+
   #buy {
     position: fixed;
     left: 50%;
@@ -241,6 +266,7 @@
   <div id="crosshair"><i></i><i></i><i></i><i></i></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
   <div id="hurt"></div>
+  <div id="threat"><i></i></div>
   <div id="clock"><div id="clock-time">1:35</div><div id="clock-phase">Freeze</div></div>
   <div id="objective">Site armed</div>
   <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span></div>
