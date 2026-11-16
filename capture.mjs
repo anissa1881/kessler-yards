@@ -117,11 +117,40 @@ const base = `http://127.0.0.1:${port}`;
 const browser = await chromium.launch(
   process.argv.includes('--software')
     // Software rasterisation, for a machine with no working GPU driver.
-    ? { args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] }
+    ? {
+        args: [
+          '--enable-unsafe-swiftshader',
+          '--use-gl=angle',
+          '--use-angle=swiftshader',
+          '--disable-gpu-sandbox',
+        ],
+      }
     // A real window, for a machine whose GPU works but whose headless path does not.
-    : { headless: !process.argv.includes('--headed') },
+    : {
+        headless: !process.argv.includes('--headed'),
+        // Keep the GPU on: Chromium's headless GPU path stands down by default, which is why a
+        // machine that draws WebGL fine in Chrome still comes back blank here.
+        args: [
+          '--enable-gpu',
+          '--ignore-gpu-blocklist',
+          '--enable-unsafe-swiftshader',
+          '--disable-gpu-sandbox',
+        ],
+      },
 );
 const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
+
+// Report which renderer the capture is actually using: a blank shot is nearly always the
+// software fallback standing in for the graphics card, and the name says so.
+console.log(`mode: ${process.argv.includes('--software') ? 'software' : process.argv.includes('--headed') ? 'headed' : 'headless'}`);
+const gpu = await page.evaluate(() => {
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  if (!gl) return 'WebGL tidak tersedia';
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  return info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+});
+console.log(`renderer: ${gpu}`);
 
 // A page error means the game is broken, and a screenshot of a broken game is worthless.
 const problems = [];
