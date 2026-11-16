@@ -111,6 +111,10 @@ let started = false;
 let accumulator = 0;
 let lastTime = performance.now();
 let buyOpen = false;
+// How long E must stay held inside the site to arm it. The prompt has always said "hold", so the
+// plant is a hold: letting go drops the progress rather than arming on a single keypress.
+const ARM_HOLD = 3.2;
+let armHeld = 0;
 
 weapon.equip(match.heldWeapon());
 hud.setAmmo(weapon.state.mag, weapon.state.reserve);
@@ -140,7 +144,10 @@ function onLockChange(locked) {
 
 function syncCamera() {
   camera.position.set(body.position.x, body.position.y + body.eye, body.position.z);
-  camera.rotation.set(body.pitch, body.yaw, 0, 'YXZ');
+  // The view is the player's aim plus the live recoil offset, so a firing burst climbs and then
+  // settles back without the offset ever overwriting the aim the player actually set.
+  const view = player.viewAngles ? player.viewAngles() : { pitch: body.pitch, yaw: body.yaw };
+  camera.rotation.set(view.pitch, view.yaw, 0, 'YXZ');
 }
 
 function aimAt(point) {
@@ -275,13 +282,21 @@ function step(dt) {
       if (playerHealth <= 0) match.endRound(false, 'You were eliminated.');
     });
 
-    // arming the site: hold E inside the ring
+    // arming the site: hold E inside the ring until the bar fills
     const inSite = Math.hypot(body.position.x - SITE.x, body.position.z - SITE.z) < 1.6;
     if (input.state.keys.has('KeyE') && inSite && !match.state.siteArmed) {
-      match.state.siteArmed = true;
-      match.state.money += match.PLANT_REWARD;
-      hud.setMoney(match.state.money);
+      armHeld = Math.min(ARM_HOLD, armHeld + dt);
+      if (armHeld >= ARM_HOLD) {
+        match.state.siteArmed = true;
+        match.state.money += match.PLANT_REWARD;
+        hud.setMoney(match.state.money);
+        audio.play('frag');
+      }
+    } else {
+      // let go, or walk out of the ring: the hold restarts from nothing
+      armHeld = 0;
     }
+    hud.setArmProgress(armHeld / ARM_HOLD);
     hud.setArmed(match.state.siteArmed);
   } else {
     weapon.step(dt);
@@ -294,6 +309,8 @@ function step(dt) {
     const result = match.state.lastResult;
     match.nextRound();
     playerHealth = 100;
+    armHeld = 0;
+    hud.setArmProgress(0);
     bots.reset();
     weapon.refillForRound();
     hud.setHealth(playerHealth);

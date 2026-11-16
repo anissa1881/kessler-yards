@@ -14,6 +14,9 @@ const AIR_ACCEL = 9;
 const FRICTION = 9;
 const GRAVITY = 20;
 const JUMP_SPEED = 6.2;
+// Recoil is a separate offset from the aim: a shot kicks it up, and it eases back to zero once
+// the firing stops, so sustained fire climbs but a pause lets the sights settle where you point.
+const RECOIL_RECOVERY = 6.5;
 
 export function createPlayer(colliders) {
   const player = {
@@ -21,6 +24,10 @@ export function createPlayer(colliders) {
     velocity: new THREE.Vector3(),
     yaw: 0,
     pitch: 0,
+    // The kick currently applied to the aim; the view reads pitch/yaw minus this, so look() stays
+    // the player's own aim and does not fight the recovery.
+    recoilPitch: 0,
+    recoilYaw: 0,
     eye: STAND_EYE,
     onGround: true,
     crouching: false,
@@ -44,11 +51,28 @@ export function createPlayer(colliders) {
   }
 
   function recoil(pitchKick, yawKick) {
-    player.pitch = Math.min(1.45, player.pitch + pitchKick);
-    player.yaw += yawKick;
+    player.recoilPitch = Math.min(1.45, player.recoilPitch + pitchKick);
+    player.recoilYaw += yawKick;
+  }
+
+  /** Ease the recoil offset back toward zero; called every frame from step(). */
+  function settleRecoil(dt) {
+    if (player.recoilPitch === 0 && player.recoilYaw === 0) return;
+    const keep = Math.max(0, 1 - RECOIL_RECOVERY * dt);
+    player.recoilPitch *= keep;
+    player.recoilYaw *= keep;
+    if (Math.abs(player.recoilPitch) < 1e-4) player.recoilPitch = 0;
+    if (Math.abs(player.recoilYaw) < 1e-4) player.recoilYaw = 0;
+  }
+
+  /** The pitch and yaw the camera actually uses: the player's aim with the live recoil added. */
+  function viewAngles() {
+    const pitch = Math.max(-1.45, Math.min(1.45, player.pitch + player.recoilPitch));
+    return { pitch, yaw: player.yaw + player.recoilYaw };
   }
 
   function step(dt, keys) {
+    settleRecoil(dt);
     const crouching = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
     if (crouching && !player.crouching) {
       player.crouching = true;
@@ -116,6 +140,7 @@ export function createPlayer(colliders) {
     step,
     look,
     recoil,
+    viewAngles,
     groundSpeed() {
       return Math.hypot(player.velocity.x, player.velocity.z);
     },
