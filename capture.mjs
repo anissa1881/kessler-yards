@@ -130,42 +130,67 @@ page.on('console', (msg) => {
   if (msg.type() === 'error') problems.push(`console error: ${msg.text().slice(0, 200)}`);
 });
 
+// Count the distinct shades in an image by decoding it with a 2D canvas, which rasterises
+// reliably on any machine. Checking the saved file rather than the GL buffer is deliberate:
+// readPixels on a canvas without preserveDrawingBuffer returns nothing once the frame has been
+// composited, so a buffer check reports a working scene as blank.
+async function shadesIn(page, bytes) {
+  const url = `data:image/jpeg;base64,${bytes.toString('base64')}`;
+  return page.evaluate(async (source) => {
+    const image = new Image();
+    const loaded = new Promise((done, fail) => {
+      image.onload = done;
+      image.onerror = () => fail(new Error('the screenshot did not decode'));
+    });
+    image.src = source;
+    await loaded;
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const shades = new Set();
+    const stride = Math.max(1, Math.floor(data.length / 4 / 6000)) * 4;
+    for (let i = 0; i < data.length; i += stride) {
+      // 4 bits per channel: coarse enough that JPEG noise does not inflate the count
+      shades.add(((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4));
+      if (shades.size > 300) break;
+    }
+    return { shades: shades.size, width: canvas.width, height: canvas.height };
+  }, url);
+}
+
 for (const frame of FRAMES) {
   await page.goto(`${base}/?shot=${frame.shot}&seed=1`, { waitUntil: 'load' });
   await page.waitForFunction('window.__shotReady === true', { timeout: 30_000 });
-  // one more painted frame, so the buffer holds the frozen scene rather than a part-drawn one
+  // one more painted frame, so the shot holds the frozen scene rather than a part-drawn one
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-  // A real render of the scene is never one flat colour: sample the canvas and count how many
-  // distinct shades it holds. A blank WebGL surface (or a page that never drew) fails here,
-  // which is far cheaper to notice now than at the judge.
-  const spread = await page.evaluate(() => {
-    const canvas = document.querySelector('canvas');
-    if (!canvas) return { error: 'no canvas' };
-    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
-    if (!gl) return { error: 'no webgl' };
-    const width = gl.drawingBufferWidth;
-    const height = gl.drawingBufferHeight;
-    if (!width || !height) return { error: 'empty drawing buffer' };
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    const shades = new Set();
-    const step = Math.max(4, Math.floor((width * height) / 4000)) * 4;
-    for (let i = 0; i < pixels.length; i += step) {
-      shades.add((pixels[i] >> 3) << 10 | (pixels[i + 1] >> 3) << 5 | pixels[i + 2] >> 3);
-      if (shades.size > 40) break;
-    }
-    return { shades: shades.size };
+
+  const path = join(OUT, frame.name);
+  await page.screenshot({ path, type: 'jpeg', quality: 90 });
+
+  // A real scene is never one flat colour, but the HUD alone can look varied enough to pass a
+  // blank canvas off as a render. Hide everything except the WebGL canvas and check that: what
+  // remains is the 3D view and nothing else, so a machine that cannot rasterise is caught here
+  // rather than by the judge.
+  const hideOverlays = await page.addStyleTag({
+    content: 'body > *:not(#game) { visibility: hidden !important }',
   });
-  if (spread.error || spread.shades < 8) {
-    console.error(`\n${frame.name}: the 3D canvas is blank (${spread.error ?? spread.shades + ' shades'}).`);
-    console.error('The HUD draws but WebGL is not rasterising. Use a machine with a real GPU driver,');
-    console.error('or run Chrome directly with "node serve.ts" and take the shots by hand.');
+  const sceneShot = await page.screenshot({ type: 'jpeg', quality: 80 });
+  await hideOverlays.evaluate((node) => node.remove());
+
+  const spread = await shadesIn(page, sceneShot);
+  if (spread.shades < 6) {
+    console.error(`\n${frame.name}: the 3D canvas came out as ${spread.shades} shade(s) of one flat colour.`);
+    console.error('The HUD draws but the scene behind it does not, so this shot would read as an empty page.');
+    console.error('Try:  node capture.mjs --headed    (a real window usually gets the GPU)');
+    console.error('      node capture.mjs --software  (render without a GPU)');
     await browser.close();
     server.close();
     process.exit(3);
   }
-  await page.screenshot({ path: join(OUT, frame.name), type: 'jpeg', quality: 90 });
-  console.log(`captured ${frame.name}  (${spread.shades} shades)`);
+  console.log(`captured ${frame.name}  (scene: ${spread.shades} shades, ${spread.width}x${spread.height})`);
 }
 
 await browser.close();
