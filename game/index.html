@@ -183,6 +183,26 @@
   }
   #objective.on { opacity: 1; }
 
+  #arm {
+    position: fixed;
+    left: 50%;
+    top: 96px;
+    transform: translateX(-50%);
+    width: 168px;
+    height: 6px;
+    border: 1px solid var(--accent);
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transition: opacity 120ms linear;
+  }
+  #arm.on { opacity: 1; }
+  #arm-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 60ms linear;
+  }
+
   #hurt {
     position: fixed;
     inset: 0;
@@ -269,6 +289,7 @@
   <div id="threat"><i></i></div>
   <div id="clock"><div id="clock-time">1:35</div><div id="clock-phase">Freeze</div></div>
   <div id="objective">Site armed</div>
+  <div id="arm"><div id="arm-fill"></div></div>
   <div id="ammo"><span id="ammo-mag">12</span><span id="ammo-reserve">/ 48</span></div>
   <div id="vitals">
     <div><span id="health-label">Health</span><span id="health">100</span></div>

@@ -48,6 +48,8 @@ export function createHud() {
   const hitmarker = document.getElementById('hitmarker');
   const hurt = document.getElementById('hurt');
   const threat = document.getElementById('threat');
+  const arm = document.getElementById('arm');
+  const armFill = document.getElementById('arm-fill');
   const clockBox = document.getElementById('clock');
   const clockTime = document.getElementById('clock-time');
   const clockPhase = document.getElementById('clock-phase');
@@ -104,6 +106,16 @@ export function createHud() {
     },
     setArmed(on) {
       objective.classList.toggle('on', on);
+    },
+    /**
+     * Show how far the arming hold has got, 0..1. Below epsilon the bar hides, so letting go of E
+     * makes it disappear rather than lingering half full.
+     */
+    setArmProgress(fraction) {
+      const shown = Math.max(0, Math.min(1, fraction));
+      const visible = shown > 0.001 && shown < 1;
+      arm.classList.toggle('on', visible);
+      armFill.style.width = `${(shown * 100).toFixed(1)}%`;
     },
     hitMarker(killed, holdMs = 90) {
       hitmarker.classList.add('on');
