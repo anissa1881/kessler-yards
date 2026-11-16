@@ -114,7 +114,13 @@ const server = await serve();
 const port = server.address().port;
 const base = `http://127.0.0.1:${port}`;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(
+  process.argv.includes('--software')
+    // Software rasterisation, for a machine with no working GPU driver.
+    ? { args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] }
+    // A real window, for a machine whose GPU works but whose headless path does not.
+    : { headless: !process.argv.includes('--headed') },
+);
 const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 1 });
 
 // A page error means the game is broken, and a screenshot of a broken game is worthless.
