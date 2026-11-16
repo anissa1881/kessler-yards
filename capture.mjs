@@ -74,16 +74,16 @@ async function loadPlaywright(wantInstall) {
       process.exit(1);
     }
   }
+  // On Windows npm and npx are .cmd shims, which spawn only finds through a shell.
+  const run = (command, args) =>
+    new Promise((done, fail) => {
+      const child = spawn(command, args, { stdio: 'inherit', shell: process.platform === 'win32' });
+      child.on('exit', (code) => (code === 0 ? done() : fail(new Error(`${command} exited ${code}`))));
+    });
   console.log('installing playwright...');
-  await new Promise((done, fail) => {
-    const child = spawn('npm', ['i', '--no-audit', '--no-fund', 'playwright'], { stdio: 'inherit' });
-    child.on('exit', (code) => (code === 0 ? done() : fail(new Error(`npm exited ${code}`))));
-  });
+  await run('npm', ['i', '--no-audit', '--no-fund', 'playwright']);
   console.log('fetching a chromium build...');
-  await new Promise((done, fail) => {
-    const child = spawn('npx', ['playwright', 'install', 'chromium'], { stdio: 'inherit' });
-    child.on('exit', (code) => (code === 0 ? done() : fail(new Error(`playwright install exited ${code}`))));
-  });
+  await run('npx', ['playwright', 'install', 'chromium']);
   return import('playwright');
 }
 
